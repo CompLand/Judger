@@ -1,6 +1,13 @@
 #! /bin/python
 __author__ = 'Amir Khazaie 733amir@gmail.com'
 
+import sys, os
+
+tempDirName = 'temporary'
+tempInputFile = 'input'
+tempOutputFile = 'output'
+tempSourceFile = 'source'
+
 sourceLanguage = 'srclan'
 languageArguments = ['-l', '--lang', '--language']
 timeLimit = 'timelimit'
@@ -32,3 +39,11 @@ languageCompilerCommand = {
     'c': 'gcc',
     'java': 'javac'
 }
+
+def absoluteDirPath(file):
+    absFilePath = os.path.realpath(file)
+    return os.path.dirname(absFilePath)
+
+def comArgMovOutToTempDir(compilerCommand):
+    if compilerCommand == 'javac':
+        return '-d ' + os.join(absoluteDirPath(), tempDirName)
