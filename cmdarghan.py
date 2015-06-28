@@ -3,10 +3,11 @@ __author__ = 'Amir Khazaie 733amir@gmail.com'
 
 from defaults import *
 
-class CAHandler:
+class CmdArgHan:
     def __init__(self, CommandLineArguments):
         self.data = {}
         self._handleCommandLineArguments(CommandLineArguments)
+        self._setDefaults()
 
     def _handleCommandLineArguments(self, cmdargs):
         for i in range(1, len(cmdargs)):
@@ -30,11 +31,10 @@ class CAHandler:
                 self.data[forbiddenSyntax] = True
             elif cmdargs[i] in sourceArguments:
                 self.data[source] = cmdargs[i + 1]
-        self._argumentsCheck()
 
-    def _argumentsCheck(self):
+    def _setDefaults(self):
         for arg in requiredArguments.keys():
             self.data[arg] = self.data.get(arg, requiredArguments[arg])
 
-    def getCommandLineArguments(self):
+    def getCmdArg(self):
         return self.data
