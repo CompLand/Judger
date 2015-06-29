@@ -7,6 +7,7 @@ tempDirName = 'temporary'
 tempInputFile = 'input'
 tempOutputFile = 'output'
 tempSourceFile = 'source'
+tempExeFile = 'exe'
 
 sourceLanguage = 'srclan'
 languageArguments = ['-l', '--lang', '--language']
@@ -33,11 +34,16 @@ requiredArguments = {sourceLanguage: 'c++', timeLimit: 3, memoryLimit: 0, progra
                      programOuput: 'file.out', resultPath: 'file.r', compare: '', compiler: '',
                      forbiddenSyntax: True, source: 'main.cpp'}
 
-languageCompilerCommand = {
+language2command = {
     'c++': 'g++',
     'cpp': 'g++',
     'c': 'gcc',
     'java': 'javac'
+}
+
+langExt = {
+    'c++': '.cpp'
+
 }
 
 def absoluteDirPath(file):
