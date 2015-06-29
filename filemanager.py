@@ -12,7 +12,15 @@ class FileManager:
         if not path.exists(self.destPath):
             makedirs(self.destPath)
         self.copyAll()
-        self.data.update({source: self.tempSourcePath(), programInput: self.tempInputPath(), programOuput: self.tempOutputPath()})
+        self.data.update({source: self.tempSourcePath() , programInput: self.tempInputPath(), programOuput: self.tempOutputPath()})
+
+    def srcExt(self):
+        if self.data[sourceLanguage] == 'c':
+            return '.c'
+        elif self.data[sourceLanguage] in ['c++', 'cpp']:
+            return '.cpp'
+        elif self.data[sourceLanguage] == 'java':
+            return '.java'
 
     def copyInput(self):
         copyfile(self.data[programInput], self.tempInputPath())
@@ -30,13 +38,15 @@ class FileManager:
         copyfile(self.data[source], self.tempSourcePath())
 
     def tempSourcePath(self):
-        return path.join(self.destPath, tempSourceFile)
+        return path.join(self.destPath, tempSourceFile) + self.srcExt()
 
     def copyAll(self):
         self.copyInput()
         self.copyOutput()
         self.copySource()
 
+    def tempDirPath(self):
+        return self.destPath
     def newPaths(self):
         return self.data
 
