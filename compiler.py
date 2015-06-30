@@ -1,58 +1,69 @@
 #! /bin/python
 __author__ = 'Amir Khazaie 733amir@gmail.com'
 
-import subprocess
+import subprocess as sp
+import os
+
+# _comcom_ is a dictionary with keys that are Language and values that are Compiler Command as a list with one string.
+comcom = {
+    'c': 'gcc',
+    'c++': 'g++',
+    'java': 'javac'
+}
+# _defarg_ is a dictionary with keys that are Compiler Command and values that are Default Arguments as list.
+defarg = {
+    'gcc': [],
+    'g++': [],
+    'javac': []
+}
+# _outarg_ is compiler argument for put the output file in specific folder
+outarg = {
+    'gcc': '-o',
+    'g++': '-o',
+    'javac': '-d'
+}
 
 class Compiler:
-
-    def __init__(self, language, userArgs, sourcePath, exePath):
-        self.sourcePath = [sourcePath]
-        self.exePath = exePath
-        self.setDefaults()
-        self.setLanguage(language)
-        self.setCompilerCommand()
-        self.setCompilerArgs(userArgs)
+    def __init__(self, language, compilerarguments, pathtosource, pathforexe):
+        self.setcommand(language, compilerarguments, pathtosource, pathforexe)
         self.compile()
 
-    def setDefaults(self):
-        self.compilerof = {
-            'c': 'gcc',
-            'c++': 'g++',
-            'java': 'javac'
-        }
-        self.defArgs = {
-            'gcc': [],
-            'g++': [],
-            'javac': []
-        }
-        self.necArgs = {
-            'gcc': ['-o', self.exePath],
-            'g++': ['-o', self.exePath],
-            'javac': ['-d', self.exePath]
-        }
-
-    def setLanguage(self, language):
-        self.language = language
-
-    def setCompilerCommand(self):
-        self.compilerCommand = [self.compilerof[self.language]]
-
-    def setCompilerArgs(self, userArgs):
-        if userArgs:
-            self.compilerArgs = userArgs
-        else:
-            self.compilerArgs = self.defArgs[self.compilerCommand[0]]
-        self.compilerArgs += self.necArgs[self.compilerCommand[0]]
+    def setcommand(self, lan, comarg, srcpath, exepath):
+        self.command = [comcom[lan]] + (comarg and comarg or defarg[comcom[lan]])
+        self.command += [outarg[comcom[lan]], exepath]
+        self.command += [srcpath]
 
     def compile(self):
-        compilingProcess = subprocess.Popen(self.compilerCommand + self.compilerArgs + self.sourcePath,
-                                           stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-        _, self.error = compilingProcess.communicate()
-        self.error = self.error.decode()
+        compro = sp.Popen(self.command, stdout=sp.PIPE, stderr=sp.PIPE)
+        self.error = compro.communicate()[1].decode()
 
     def status(self):
         if self.error:
             return self.error
+        return None
 
-# if __name__ == '__main__':
-#     Compiler('c', [], pathof['source'], pathof['exefile'])
+if __name__ == '__main__':
+    print('''Running test for module. In this test module make a 'TEST.c' file alongside module file,then
+compile it. If you see no errors and see the 'Hello World!' on output, logic of module is fine.
+''')
+    testfile = open('TEST.c', 'w')
+    testfile.write('''#include <stdio.h>\nint main(int argc, char const *argv[])\n{\n
+    printf("Hello World!\\n");\n    return 0;\n}''')
+    testfile.close()
+    print('Compiling ...')
+    compiler = Compiler('c', [], 'TEST.c', 'TEST')
+    if compiler.status():
+        print('Compiler error:')
+        print(compiler.status())
+    else:
+        print('Compiled successfully.')
+        print('Running executable file ...')
+        exetest = sp.Popen('./TEST', stdout=sp.PIPE, stderr=sp.PIPE)
+        output, error = exetest.communicate()
+        print('TEST output:')
+        print(output.decode())
+        if error:
+            print('TEST error:')
+            print(error)
+    os.remove('TEST.c')
+    os.remove('TEST')
