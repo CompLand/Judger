@@ -1,4 +1,4 @@
-#! /bin/python
+#! /bin/python3
 __author__ = 'Amir Khazaie 733amir@gmail.com'
 
 import subprocess as sp
