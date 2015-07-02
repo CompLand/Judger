@@ -10,7 +10,7 @@ import json
 import tempfile
 from shutil import copy
 from compiler import Compiler
-
+from runner import Runner
 
 languageextension = {
     'c': '.c',
@@ -38,9 +38,10 @@ class Judger:
         self.sourcepath = sourcepath
         self.test = test
         self.checkargs()
+        self.memorylimit = self.memorylimit * 1024 * 1024
 
     def handlecommnadlineargument(self):
-        parser = argparse.ArgumentParser(description='This python 3.X script is for auto-judging codes.', add_help=True)
+        parser = argparse.ArgumentParser(description='This python script is auto-judging codes.', add_help=True)
         parser.add_argument('-v', '--version', action='version', version='Version Pre-alpha')
         parser.add_argument('-l', '--language', dest='language', help='language of source you want to be judged (lowercase)', choices=(supportedlanguages))
         parser.add_argument('-t', '--time-limit', type=int, dest='timelimit', help='time limit for the code (integer of seconds)')
@@ -55,6 +56,7 @@ class Judger:
         parser.add_argument('-test', action='store_true', dest='test', help='run complete test on whole project')
         parser.parse_args(namespace=self)
         self.checkargs()
+        self.memorylimit = self.memorylimit * 1024 * 1024
 
     def checkargs(self):
         error = ''
@@ -97,6 +99,12 @@ class Judger:
         if compiler.status():
             self.writeresultfile(self.resultpath, 'CE', compiler.status(), 0, 0)
             return None
+        else:
+            print("Compiled succesfully.")
+        self.programoutput = 'programoutput'
+        runner = Runner(self.timelimit, self.memorylimit, self.inputpath, os.path.join(self.tempdir.name, self.programoutput), self.exepath)
+        f = open(os.path.join(self.tempdir.name, self.programoutput), 'r')
+        print(f.read())
 
     def copyfiles(self):
         self.tempdir = tempfile.TemporaryDirectory()
