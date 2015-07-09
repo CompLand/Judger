@@ -1,40 +1,37 @@
-#! /usr/bin/python3
-__author__ = 'Amir Khazaie 733amir@gmail.com'
-
-import os
-import json
-import argparse
-import tempfile
-import subprocess
+from json import dump
+from time import sleep, time
 from shutil import copy
+from psutil import Process, NoSuchProcess
+from os.path import isfile, join, split
+from argparse import ArgumentParser
+from tempfile import TemporaryDirectory
+from threading import Thread
+from subprocess import Popen, PIPE, TimeoutExpired
 
-
-# Some default arguments for project.
 supported_languages = ['c', 'c++', 'java']
 filtering_categories = ['acm']
 compiler_command = {
     'c': 'gcc',
     'c++': 'g++',
-    'java': 'javac'
-}
-default_arguments = {
-    'gcc': '',
-    'g++': '',
-    'javac': ''
-}
-necessary_argument_for_output = {
-    'gcc': '-o',
-    'g++': '-o',
-    'javac': '-d'
-}
-language_file_extension = {
-    'c': '.c',
-    'c++': '.cpp',
-    'java': '.java'
+    'cpp': 'g++',
+    'java': 'javac',
 }
 
+def readable(path):
+    try:
+        open(path)
+    except RuntimeError:
+        return False
+    return True
 
-# Exceptions
+def writable(path):
+    try:
+        open(path, 'w')
+    except RuntimeError:
+        return False
+    return True
+
+
 class InputArgumentsError(RuntimeError):
     def __init__(self, arg):
         self.arg = arg
@@ -44,298 +41,232 @@ class CompilerError(RuntimeError):
     def __init__(self, arg):
         self.arg = arg
 
-# Judger Object
-class Judger:
-    """
- This script is written for linux systems in python3. The Judger will judge
-specific code with input and compare the output. Result of judgement is in
-result file.
-"""
 
-    def set(self, language, time_limit, memory_limit, input_path, output_path, result_path, diff_args, compiler_args,
-            forbidden_category, source_path, test):
-        """
- For using this judge you should passed information that is necessary with
-this function.
+class Judge:
+    def judge(self, language, time_limit, memory_limit, input_path,
+                 output_path, source_path, result_path = None, diff_args = "",
+                 compiler_args = "", forbidden_category = "acm"):
+        self.__check_args(language, time_limit, memory_limit, input_path,
+                 output_path, result_path, diff_args, compiler_args,
+                 forbidden_category, source_path)
+        self.__src_lan = language
+        self.__com_com = compiler_command[language]
+        self.__tim_lim = time_limit
+        self.__mem_lim = memory_limit * 1024 * 1024
+        self.__inp_pat = input_path
+        self.__out_pat = output_path
+        self.__res_pat = result_path
+        self.__dif_arg = diff_args
+        self.__com_arg = compiler_args
+        self.__for_cat = forbidden_category
+        self.__src_pat = source_path
+        self.__judgement()
 
-    Exception(s):
-        None
-    Function parameter(s):
-        language: Language of source code.
-        time_limit: Time limit in seconds that program must run, get input,
-            print output and ends.
-        memory_limit: Memory limit in Mega Bytes that program must run, get
-            input, print output and ends.
-        input_path: Relative or absolute path to input file for program.
-        output_path: Relative or absolute path to output file to compare with
-            the program output.
-        result_path: Relative or absolute path containing name of file to
-            write the result in it.
-        diff_args: Linux `diff` command to compare th output of the program
-            with the output file pass by user (`output_path`). Define it with
-            double-quotes.
-        compiler_args: Compiler arguments for the compiler to compile the
-            source code.
-        forbidden_category: Selected category to define a restriction of
-            the source code accessibility.
-        source_path: Relative or absolute path to source code file.
-        test: A boolean, if True the whole module will be tested otherwise
-            module works normal.
-    Function return:
-        None
-"""
-        self.language = language
-        self.time_limit = time_limit
-        self.memory_limit = memory_limit
-        self.input_path = input_path
-        self.output_path = output_path
-        self.result_path = result_path
-        self.diff_args = diff_args
-        self.compiler_args = compiler_args
-        self.forbidden_category = forbidden_category
-        self.source_path = source_path
-        self.test = test
-        self.check_args()
-        self.memory_limit = self.memory_limit * 1024 * 1024
-        self.imported_module = True
+    def run_module(self):
+        parser = ArgumentParser(
+            description='This python script is auto-judging codes.',
+            add_help=True
+        )
+        parser.add_argument(
+            '-v', '--version',
+            action='version',
+            version='Version Pre-alpha'
+        )
+        parser.add_argument(
+            '-l', '--language',
+            dest='language',
+            help='language of source code you want to be judged (lowercase)',
+            choices=(supported_languages)
+        )
+        parser.add_argument(
+            '-t', '--time-limit',
+            type=int, dest='time_limit',
+            help='time limit for the code (integer of seconds)'
+        )
+        parser.add_argument(
+            '-m', '--memory-limit',
+            type=int, dest='memory_limit',
+            help='memory limit for the code (integer of MB)'
+        )
+        parser.add_argument(
+            '-i', '--input-path',
+            dest='input_path',
+            help='relative or absolute path to input file'
+        )
+        parser.add_argument(
+            '-o', '--output-path',
+            dest='output_path',
+            help='relative or absolute path to output file'
+        )
+        parser.add_argument(
+            '-r', '--result-path',
+            dest='result_path',
+            help='relative or absolute path including the name of result file'
+        )
+        parser.add_argument(
+            '-d', '--diff-args',
+            dest='diff_args',
+            help='diff options to compare (put them in double quotes)'
+        )
+        parser.add_argument(
+            '-c', '--compiler-args',
+            dest='compiler_args',
+            help='compiler options (put them in double quotes)'
+        )
+        parser.add_argument(
+            '-f', '--forbidden-syntax',
+            dest='forbidden_category',
+            help='select a category for checking forbidden syntax',
+            choices=(filtering_categories)
+        )
+        parser.add_argument(
+            dest='source_path',
+            help='relative or absolute path to source file')
+        n = parser.parse_args()
+        self.judge(n.language, n.time_limit, n.memory_limit, n.input_path,
+                   n.output_path, n.source_path, n.result_path, n.diff_args,
+                   n.compiler_args, n.forbidden_category)
 
-    def handle_command_line_argument(self):
-        """
- Handling arguments passed in the command line and add them to `Judge`
-namespace.
-
-    Exception(s):
-        None
-    Function parameter(s):
-        None
-    Function return:
-        None
-"""
-        parser = argparse.ArgumentParser(description='This python script is auto-judging codes.', add_help=True)
-        parser.add_argument('-v', '--version', action='version', version='Version Pre-alpha')
-        parser.add_argument('-l', '--language', dest='language',
-                            help='language of source you want to be judged (lowercase)', choices=(supported_languages))
-        parser.add_argument('-t', '--time-limit', type=int, dest='time_limit',
-                            help='time limit for the code (integer of seconds)')
-        parser.add_argument('-m', '--memory-limit', type=int, dest='memory_limit',
-                            help='memory limit for the code (integer of MB)')
-        parser.add_argument('-i', '--input-path', dest='input_path',
-                            help='relative or absolute path to input file')
-        parser.add_argument('-o', '--output-path', dest='output_path',
-                            help='relative or absolute path to output file')
-        parser.add_argument('-r', '--result-path',  dest='result_path',
-                            help='relative or absolute path containing the name of result file')
-        parser.add_argument('-d', '--diff-args', dest='diff_args',
-                            help='diff options to compare (put them in double quotes)')
-        parser.add_argument('-c', '--compiler-args', dest='compiler_args',
-                            help='compiler options (put them in double quotes)')
-        parser.add_argument('-f', '--forbidden-syntax', dest='forbidden_category',
-                            help='select a category for checking forbidden syntax.', choices=(filtering_categories))
-        parser.add_argument(dest='source_path',
-                            help='relative or absolute path to source file')
-        parser.add_argument('-test', action='store_true', dest='test',
-                            help='run complete test on whole project', default=False)
-        parser.parse_args(namespace=self)
-        self.check_args()
-        self.memory_limit = self.memory_limit * 1024 * 1024
-        self.imported_module = False
-
-    def check_args(self):
-        """
- Checking correctness of the passed arguments to avoid exceptions and problems
-caused by the value of this arguments.
-
-    Exception(s):
-        `InputArgumentsError` with string argument that explains the error
-    Function parameter(s):
-        None
-    Function return:
-        None
-"""
+    def __check_args(self, lan, tim, mem, inp, out, res, dif, com, frb, src):
         error = ''
-        if self.language not in supported_languages:
+        if lan not in supported_languages:
             error = 'Language not supported.'
-        elif type(self.time_limit) is not int:
-            error = 'Time limit is not integer.'
-        elif type(self.memory_limit) is not int:
-            error = 'Memory limit is not integer.'
-        elif not os.path.isfile(self.input_path):
-            error = 'Input path not pointing to a file.'
-        elif not os.access(self.input_path, os.R_OK):
+        elif not isinstance(tim, int):
+            error = 'Time_limit is not integer.'
+        elif not isinstance(mem, int):
+            error = 'Memory_limit is not integer.'
+        elif not isfile(inp):
+            error = 'Input_path not pointing to a file.'
+        elif not readable(inp):
             error = 'Input file is not readable.'
-        elif not os.path.isfile(self.output_path):
-            error = 'Output path not pointing to a file.'
-        elif not os.access(self.output_path, os.R_OK):
+        elif not isfile(out):
+            error = 'Output_path not pointing to a file.'
+        elif not readable(out):
             error = 'Output file is not readable.'
-        elif not self.writable(self.result_path):
-            error = 'Can\'t write result file.'
-        elif not self.forbidden_category in filtering_categories:
-            error = 'No category named \'%s\'.' % self.forbidden_category
-        elif not os.path.isfile(self.source_path):
-            error = 'Source path not pointing to a file.'
-        elif not os.access(self.source_path, os.R_OK):
+        elif res:
+            if not writable(res):
+                error = 'Can\'t write result file.'
+        elif not frb in filtering_categories:
+            error = 'No category named \'%s\'.' % frb
+        elif not isfile(src):
+            error = 'Source_path not pointing to a file.'
+        elif not readable(src):
             error = 'Source file is not readable.'
         if error:
             raise InputArgumentsError(error)
 
-    def writable(self, path):
-        """
- Checking writability of the path.
-
-    Exception(s):
-        None
-    Function parameter(s):
-        path: relative or absolute path to a file
-    Function return:
-        bool: True if can make file and write to it otherwise False.
-"""
+    def __judgement(self):
+        global max_memory, max_memory
+        self.__copy_files()
         try:
-            f = open(path, 'w')
-        except IOError:
-            return False
-        f.close()
-        return True
-
-    def compiler(self):
-        """
- By using the information at the first of this script, the ones that defined
-to carry defaults options and arguments, it will compile the source code to a
-specific binary data to run.
-
-    Exception(s):
-        `CompilerError` with string argument that explain the error.
-    Function parameter(s):
-        None
-    Function return:
-        None
-"""
-        command = [compiler_command[self.language]] +\
-                  [self.compiler_args and self.compiler_args or default_arguments[compiler_command[self.language]]] +\
-                  [necessary_argument_for_output[compiler_command[self.language]], self.executable_file_path] +\
-                  [self.source_path]
-        error = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE).communicate()[1].decode()
-        if error:
-            raise CompilerError(error)
-
-    def runner(self):
-        pass
-
-    def judge(self):
-        """
- This is the main function that you should call. But before calling this you
-have to set information that judger needs with `handle_command_line_argument`
-function or `set` function.
-
-    Exception(s):
-        None
-    Function parameter(s):
-        None
-    Function return:
-        None
-"""
-        self.copy_files()
-        try:
-            self.compiler()
+            self.__compile()
         except CompilerError as e:
-            self.set_result('CE', e.arg, 0, 0)
-            if not self.imported_module:
-                self.write_result_file()
+            self.__set_status('CE', e.arg, 0, 0)
         else:
-            # TODO write a runner function in here
-            pass
+            data = {}
+            run_thread = Thread(target=self.__run, args=(data,))
+            run_thread.start()
+            while not data.get('pid'):
+                pass
+            max_memory = 0
+            process_ended = False
+            try:
+                p = Process(data['pid'])
+                max_memory = p.memory_info()[0] #- p.memory_info_ex().shared
+                memory = p.memory_info()[0] #- p.memory_info_ex().shared
+                while max_memory <= self.__mem_lim and memory != 0:
+                    memory = p.memory_info()[0] #- p.memory_info_ex().shared
+                    if max_memory < memory:
+                        max_memory = memory
+            except NoSuchProcess:
+                process_ended = True
+            else:
+                data['kill']()
+            while not data.get('time'):
+                pass
+            if max_memory > self.__mem_lim:
+                self.__set_status('MLE', '', 0, max_memory )
+            elif data['time'] == self.__tim_lim:
+                self.__set_status('TLE', '', self.__tim_lim, max_memory)
+            elif data['return']:
+                self.__set_status('RE', '', data['time'], max_memory)
+            elif data['output'] == open(self.__out_pat).read():
+                self.__set_status('AC', '', data['time'], max_memory)
+            else:
+                self.__set_status('WA', '', data['time'], max_memory)
+        if self.__res_pat:
+            self.__write_status()
 
-    def copy_files(self):
-        """
- To judge the code with specific input and output, we copy all necessary files
-in a temporary directory in the system, because maybe at the judging time the
-files could be deleted or moved or ... that there is no longer access to the
-content of those files.
+    def __copy_files(self):
+        self.__tmp_pat = TemporaryDirectory()
+        copy(self.__inp_pat, self.__tmp_pat.name)
+        self.__inp_pat = join(self.__tmp_pat.name, split(self.__inp_pat)[1])
+        copy(self.__out_pat, self.__tmp_pat.name)
+        self.__out_pat = join(self.__tmp_pat.name, split(self.__out_pat)[1])
+        copy(self.__src_pat, self.__tmp_pat.name)
+        self.__src_pat = join(self.__tmp_pat.name, split(self.__src_pat)[1])
+        if self.__src_lan in ['c', 'c++', 'cpp']:
+            self.__exe_pat = join(self.__tmp_pat.name, 'exe')
+        elif self.__src_lan == 'java':
+            self.__exe_pat = join(self.__tmp_pat.name,
+                                split(self.__src_pat)[1][:-5] + '.class')
 
-    Exception(s):
-        None
-    Function parameter(s):
-        None
-    Function return:
-        None
-"""
-        self.temporary_directory_path = tempfile.TemporaryDirectory()
-        copy(self.input_path, os.path.join(self.temporary_directory_path.name, 'input'))
-        self.input_path = os.path.join(self.temporary_directory_path.name, 'input')
-        copy(self.output_path, os.path.join(self.temporary_directory_path.name, 'output'))
-        self.output_path = os.path.join(self.temporary_directory_path.name, 'output')
-        copy(self.source_path, os.path.join(self.temporary_directory_path.name, 'source' +\
-                                            language_file_extension[self.language]))
-        self.source_path = os.path.join(self.temporary_directory_path.name, 'source' +\
-                                        language_file_extension[self.language])
-        self.executable_file_path = os.path.join(self.temporary_directory_path.name, 'exe')
+    def __compile(self):
+        command = [self.__com_com]
+        if self.__com_arg:
+            command += [self.__com_arg]
+        if self.__src_lan == 'java':
+            command += ['-d', self.__tmp_pat.name]
+        elif self.__src_lan in ['c', 'c++']:
+            command += ['-o', self.__exe_pat]
+        command += [self.__src_pat]
+        error = Popen(command, stdout=PIPE, stderr=PIPE).communicate()[1]
+        if error:
+            raise CompilerError(error.decode())
 
-    def set_result(self, status, error, time, memory):
-        """
- Set result to class attributes.
+    def __run(self, data):
+        input_string = open(self.__inp_pat, 'r').read()
+        command = None
+        if self.__src_lan in ['c', 'c++']:
+            command = self.__exe_pat
+        elif self.__src_lan == 'java':
+            class_name = split(self.__src_pat)[1][:-5]
+            command = ['java', class_name]
+        program = Popen(command, stdin=PIPE, stdout=PIPE, stderr=PIPE)
+        data['pid'] = program.pid
+        data['kill'] = program.kill
+        start_time = time()
+        try:
+            output, error = program.communicate(bytes(input_string, 'ascii'),
+                                                self.__tim_lim)
+            data['return'] = program.returncode
+            data['time'] = time() - start_time
+        except TimeoutExpired:
+            data['time'] = self.__tim_lim
+            program.kill()
+        else:
+            data['output'] = output.decode()
+            data['error'] = error.decode()
 
-    Exception(s):
-        None
-    Function parameter(s):
-        status: Status to write in the file.
-        error: Error to write in the file.
-        time: Used time to write in the file.
-        memory: Used memory to write in the file.
-    Function return:
-        None
-"""
-        self.status = status
-        self.error = error
-        self.time = time
-        self.memory = memory
+    def __set_status(self, status, error, time, memory):
+        self.__sts = status
+        self.__err = error
+        self.__tim = time
+        self.__mem = memory
 
-    def write_result_file(self):
-        """
- Judge provide information about judgement and write them to file with path
-of `result_path` with format of `JSON`. The json file is like this:
-{
-    "status": Status of the judgement that can be "AC" as Accepted, "WA" as
-              Wrong Answer, "RE" as Runtime Error, "TLE" as Time Limit
-              Exceeded, "MLE" as Memory Limit Exceeded, "OLE" as Output Limit
-              Exceeded and "IE" as Internal Error.
-    ,
-    "error": Explanation of the error that happened.
-    ,
-    "time": Time spend to run the code.
-    ,
-    "memory": Memory used to run the code.
-}
-
-    Exception(s):
-        None
-    Function parameter(s):
-        None
-    Function return:
-        None
-"""
+    def __write_status(self):
         data = {
-            'status': self.status,
-            'error': self.error,
-            'time': self.time,
-            'memory': self.memory
+            'status': self.__sts,
+            'error': self.__err,
+            'time': self.__tim,
+            'memory': self.__mem
         }
-        result_file = open(self.result_path, 'w')
-        json.dump(data, result_file)
-        result_file.close()
+        res_fle = open(self.__res_pat, 'w')
+        dump(data, res_fle)
+        res_fle.close()
 
-    def result(self):
-        """
- Returns a tuple of current judgment status.
-
-    Exception(s):
-        None
-    Function parameter(s):
-        None
-    Function return:
-        (status, error, time, memory)
-"""
-        return (self.status, self.error, self.time, self.memory)
+    def status(self):
+        return (self.__sts, self.__err, self.__tim, self.__mem)
 
 if __name__ == '__main__':
-    j = Judger()
-    j.handle_command_line_argument()
-    j.judge()
+    Judge().run_module()
