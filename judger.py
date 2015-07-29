@@ -1,272 +1,285 @@
-from json import dump
-from time import sleep, time
-from shutil import copy
-from psutil import Process, NoSuchProcess
+#! /usr/bin/env python3
+__author__ = 'Amir Khazaie, Isfahan University of Technology Student, Email: 733amir@gmail.com'
+
+'''
+Auto-Judging script written in python.
+This script needs no root permission.
+Currently support C, C++, Java with just one source code.
+There is 2 way to use this script:
+1- Commandline
+2- Import it in your script, call Judger function and pass the arguments
+This script is written by CompLand/Amir Khazaie
+Copyright 2015
+'''
+
+from os import remove
 from os.path import isfile, join, split
-from argparse import ArgumentParser
 from tempfile import TemporaryDirectory
-from threading import Thread
+from shutil import copy
 from subprocess import Popen, PIPE, TimeoutExpired
+from time import time
+from json import dump
+from threading import Thread
+from psutil import Process, NoSuchProcess
+from argparse import ArgumentParser
 
-supported_languages = ['c', 'c++', 'java']
-filtering_categories = ['acm']
-compiler_command = {
-    'c': 'gcc',
-    'c++': 'g++',
-    'cpp': 'g++',
-    'java': 'javac',
+sup_lan = supported_languages = ["c", "c++", "cpp", "java"]
+def_com_arg = default_compiler_arguments = {
+    'c': '',
+    'c++': '',
+    'cpp': '',
+    'java': ''
 }
-
-def readable(path):
-    try:
-        open(path)
-    except RuntimeError:
-        return False
-    return True
 
 def writable(path):
     try:
         open(path, 'w')
     except RuntimeError:
         return False
+    remove(path)
     return True
 
+def file_name_check(lan, path):
+    file_name = split(path)[1]
+    if '.' not in file_name:
+        return False
+    file_name_main, file_name_extension = file_name.split('.')
+    if lan == 'java' and file_name_extension == 'java':
+        return True
+    elif lan == 'c' and file_name_extension == 'c':
+        return True
+    elif lan in ['c++', 'cpp'] and file_name_extension == 'cpp':
+        return True
+    return False
 
-class InputArgumentsError(RuntimeError):
-    def __init__(self, arg):
-        self.arg = arg
+def input_output_list_builder(input_directory_path, output_directory_path):
+    i = 1
+    input_list = []
+    output_list = []
+    while True:
+        input_file = join(input_directory_path, '%d.in' % i)
+        output_file = join(output_directory_path, '%d.out' % i)
+        if isfile(input_file) and isfile(output_file):
+            input_list.append(input_file)
+            output_list.append(output_file)
+            i += 1
+        elif i == 1:
+            raise InputOutputFileError('No Input-Output paired file')
+        else:
+            break
+    return (input_list, output_list)
+
+def command_line_argument_handler():
+    parser = ArgumentParser(
+            description='This python script is auto-judging codes.',
+            add_help=True
+        )
+    parser.add_argument(
+        '-v', '--version',
+        action='version',
+        version='Version Alpha'
+    )
+    parser.add_argument(
+        '-l', '--language',
+        dest='language', default='c',
+        help='language of source code you want to be judged (lowercase)',
+        choices=(sup_lan)
+    )
+    parser.add_argument(
+        '-t', '--time-limit',
+        type=int, dest='time_limit', default='5',
+        help='time limit for the code (integer of seconds)'
+    )
+    parser.add_argument(
+        '-m', '--memory-limit',
+        type=int, dest='memory_limit', default='16',
+        help='memory limit for the code (integer of MB)'
+    )
+    parser.add_argument(
+        '-i', '--input-directory-path',
+        dest='input_path', default='.',
+        help='relative or absolute path to input directory'
+    )
+    parser.add_argument(
+        '-o', '--output-directory-path',
+        dest='output_path', default='.',
+        help='relative or absolute path to output directory'
+    )
+    parser.add_argument(
+        '-r', '--result-directory-path',
+        dest='result_path', default='.',
+        help='relative or absolute path to result directory'
+    )
+    parser.add_argument(
+        '-c', '--compiler-args',
+        dest='compiler_args', default=None,
+        help='compiler options (put them in double quotes)'
+    )
+    parser.add_argument(
+        dest='source_path',
+        help='relative or absolute path to source file')
+    return parser.parse_args()
+
+def Judger(language='c', time_limit='5', memory_limit='16', input_directory_path='.', output_directory_path='.',
+         result_directory_path='.', source_file_path='source.c', compiler_arguments=None):
+    in_list, out_list = input_output_list_builder(input_directory_path, output_directory_path)
+    Judge(language, time_limit, memory_limit, in_list, out_list, source_file_path, result_directory_path,
+          compiler_arguments)
 
 
-class CompilerError(RuntimeError):
+class InputOutputFileError(RuntimeError):
     def __init__(self, arg):
         self.arg = arg
 
 
 class Judge:
-    def judge(self, language, time_limit, memory_limit, input_path,
-                 output_path, source_path, result_path = None, diff_args = "",
-                 compiler_args = "", forbidden_category = "acm"):
-        self.__check_args(language, time_limit, memory_limit, input_path,
-                 output_path, result_path, diff_args, compiler_args,
-                 forbidden_category, source_path)
-        self.__src_lan = language
-        self.__com_com = compiler_command[language]
+    def __init__(self, language, time_limit, memory_limit, input_files_path_list, output_files_path_list,
+                 source_file_path, result_directory_path, compiler_arguments=None):
+        self.__lan = language
         self.__tim_lim = time_limit
         self.__mem_lim = memory_limit * 1024 * 1024
-        self.__inp_pat = input_path
-        self.__out_pat = output_path
-        self.__res_pat = result_path
-        self.__dif_arg = diff_args
-        self.__com_arg = compiler_args
-        self.__for_cat = forbidden_category
-        self.__src_pat = source_path
-        self.__judgement()
-
-    def run_module(self):
-        parser = ArgumentParser(
-            description='This python script is auto-judging codes.',
-            add_help=True
-        )
-        parser.add_argument(
-            '-v', '--version',
-            action='version',
-            version='Version Pre-alpha'
-        )
-        parser.add_argument(
-            '-l', '--language',
-            dest='language',
-            help='language of source code you want to be judged (lowercase)',
-            choices=(supported_languages)
-        )
-        parser.add_argument(
-            '-t', '--time-limit',
-            type=int, dest='time_limit',
-            help='time limit for the code (integer of seconds)'
-        )
-        parser.add_argument(
-            '-m', '--memory-limit',
-            type=int, dest='memory_limit',
-            help='memory limit for the code (integer of MB)'
-        )
-        parser.add_argument(
-            '-i', '--input-path',
-            dest='input_path',
-            help='relative or absolute path to input file'
-        )
-        parser.add_argument(
-            '-o', '--output-path',
-            dest='output_path',
-            help='relative or absolute path to output file'
-        )
-        parser.add_argument(
-            '-r', '--result-path',
-            dest='result_path',
-            help='relative or absolute path including the name of result file'
-        )
-        parser.add_argument(
-            '-d', '--diff-args',
-            dest='diff_args',
-            help='diff options to compare (put them in double quotes)'
-        )
-        parser.add_argument(
-            '-c', '--compiler-args',
-            dest='compiler_args',
-            help='compiler options (put them in double quotes)'
-        )
-        parser.add_argument(
-            '-f', '--forbidden-syntax',
-            dest='forbidden_category',
-            help='select a category for checking forbidden syntax',
-            choices=(filtering_categories)
-        )
-        parser.add_argument(
-            dest='source_path',
-            help='relative or absolute path to source file')
-        n = parser.parse_args()
-        self.judge(n.language, n.time_limit, n.memory_limit, n.input_path,
-                   n.output_path, n.source_path, n.result_path, n.diff_args,
-                   n.compiler_args, n.forbidden_category)
-
-    def __check_args(self, lan, tim, mem, inp, out, res, dif, com, frb, src):
-        error = ''
-        if lan not in supported_languages:
-            error = 'Language not supported.'
-        elif not isinstance(tim, int):
-            error = 'Time_limit is not integer.'
-        elif not isinstance(mem, int):
-            error = 'Memory_limit is not integer.'
-        elif not isfile(inp):
-            error = 'Input_path not pointing to a file.'
-        elif not readable(inp):
-            error = 'Input file is not readable.'
-        elif not isfile(out):
-            error = 'Output_path not pointing to a file.'
-        elif not readable(out):
-            error = 'Output file is not readable.'
-        elif res:
-            if not writable(res):
-                error = 'Can\'t write result file.'
-        elif not frb in filtering_categories:
-            error = 'No category named \'%s\'.' % frb
-        elif not isfile(src):
-            error = 'Source_path not pointing to a file.'
-        elif not readable(src):
-            error = 'Source file is not readable.'
-        if error:
-            raise InputArgumentsError(error)
-
-    def __judgement(self):
-        global max_memory, max_memory
-        self.__copy_files()
-        try:
-            self.__compile()
-        except CompilerError as e:
-            self.__set_status('CE', e.arg, 0, 0)
+        self.__inp_lis = input_files_path_list
+        self.__out_lis = output_files_path_list
+        self.__src = source_file_path
+        self.__res = result_directory_path
+        if compiler_arguments:
+            self.__com_arg = compiler_arguments
         else:
-            data = {}
-            run_thread = Thread(target=self.__run, args=(data,))
-            run_thread.start()
-            while not data.get('pid'):
-                pass
-            max_memory = 0
-            process_ended = False
-            try:
-                p = Process(data['pid'])
-                max_memory = p.memory_info()[0] #- p.memory_info_ex().shared
-                memory = p.memory_info()[0] #- p.memory_info_ex().shared
-                while max_memory <= self.__mem_lim and memory != 0:
-                    memory = p.memory_info()[0] #- p.memory_info_ex().shared
-                    if max_memory < memory:
-                        max_memory = memory
-            except NoSuchProcess:
-                process_ended = True
-            else:
-                data['kill']()
-            while not data.get('time'):
-                pass
-            if max_memory > self.__mem_lim:
-                self.__set_status('MLE', '', 0, max_memory )
-            elif data['time'] == self.__tim_lim:
-                self.__set_status('TLE', '', self.__tim_lim, max_memory)
-            elif data['return']:
-                self.__set_status('RE', '', data['time'], max_memory)
-            elif data['output'] == open(self.__out_pat).read():
-                self.__set_status('AC', '', data['time'], max_memory)
-            else:
-                self.__set_status('WA', '', data['time'], max_memory)
-        if self.__res_pat:
-            self.__write_status()
+            self.__com_arg = def_com_arg[language]
+        self.__copy_files()
+        if self.__compile():
+            self.__run()
 
     def __copy_files(self):
-        self.__tmp_pat = TemporaryDirectory()
-        copy(self.__inp_pat, self.__tmp_pat.name)
-        self.__inp_pat = join(self.__tmp_pat.name, split(self.__inp_pat)[1])
-        copy(self.__out_pat, self.__tmp_pat.name)
-        self.__out_pat = join(self.__tmp_pat.name, split(self.__out_pat)[1])
-        copy(self.__src_pat, self.__tmp_pat.name)
-        self.__src_pat = join(self.__tmp_pat.name, split(self.__src_pat)[1])
-        if self.__src_lan in ['c', 'c++', 'cpp']:
-            self.__exe_pat = join(self.__tmp_pat.name, 'exe')
-        elif self.__src_lan == 'java':
-            self.__exe_pat = join(self.__tmp_pat.name,
-                                split(self.__src_pat)[1][:-5] + '.class')
+        self.__tmp_dir = TemporaryDirectory()
+        new_list = []
+        i = 1
+        for address in self.__inp_lis:
+            new_address = join(self.__tmp_dir.name, "%d.in" % i)
+            copy(address, new_address)
+            new_list.append(new_address)
+            i += 1
+        self.__inp_lis = new_list.copy()
+        new_list.clear()
+        i = 1
+        for address in self.__out_lis:
+            new_address = join(self.__tmp_dir.name, "%d.out" % i)
+            copy(address, new_address)
+            new_list.append(new_address)
+            i += 1
+        self.__out_lis = new_list.copy()
+        copy(self.__src, self.__tmp_dir.name)
+        file_name = split(self.__src)[1]
+        self.__src = join(self.__tmp_dir.name, file_name)
+        self.__exe = join(self.__tmp_dir.name, file_name.split('.')[0])
 
     def __compile(self):
-        command = [self.__com_com]
+        command = []
+        if self.__lan == 'c':
+            command.append('gcc')
+        elif self.__lan in ['c++', 'cpp']:
+            command.append('g++')
+        elif self.__lan == 'java':
+            command.append('javac')
         if self.__com_arg:
-            command += [self.__com_arg]
-        if self.__src_lan == 'java':
-            command += ['-d', self.__tmp_pat.name]
-        elif self.__src_lan in ['c', 'c++']:
-            command += ['-o', self.__exe_pat]
-        command += [self.__src_pat]
-        error = Popen(command, stdout=PIPE, stderr=PIPE).communicate()[1]
+            command.extend(self.__com_arg.split())
+        if self.__lan in ['c', 'c++', 'cpp']:
+            command.append('-o')
+            command.append(self.__exe)
+        elif self.__lan == 'java':
+            command.append('-d')
+            command.append(self.__tmp_dir.name)
+        command.append(self.__src)
+        output, error = Popen(command, stdout=PIPE, stderr=PIPE).communicate()
         if error:
-            raise CompilerError(error.decode())
+            self.__write_status('res', 'CE', error.decode(), 0, 0)
+            return False
+        return True
 
-    def __run(self, data):
-        input_string = open(self.__inp_pat, 'r').read()
-        command = None
-        if self.__src_lan in ['c', 'c++']:
-            command = self.__exe_pat
-        elif self.__src_lan == 'java':
-            class_name = split(self.__src_pat)[1][:-5]
-            command = ['java', class_name]
-        program = Popen(command, stdin=PIPE, stdout=PIPE, stderr=PIPE)
-        data['pid'] = program.pid
-        data['kill'] = program.kill
-        start_time = time()
+    def __run(self):
+        if self.__lan == 'java':
+            self.__exe = ['java', self.__exe]
+        l = [(self.__inp_lis[i], self.__out_lis[i]) for i in range(len(self.__inp_lis))]
+        results = []
+        i = 0
+        for input_path, output_path in l:
+            i += 1
+            p = Popen(self.__exe, stdin=PIPE, stdout=PIPE, stderr=PIPE)
+            data = [p.pid, p.kill]
+            t = Thread(target=self.__memory_watcher, args=(data,))
+            t.start()
+            try:
+                start_time = time()
+                o, e = p.communicate(bytes(open(input_path).read(), 'ascii'), self.__tim_lim)
+                end_time = time()
+            except TimeoutExpired:
+                p.kill()
+                self.__write_status('%d.res' % i, 'TLE', '', self.__tim_lim, 0)
+                results.append('TLE')
+            else:
+                t.join()
+                if data[2] > self.__mem_lim:
+                    self.__write_status('%d.res' % i, 'MLE', '', end_time - start_time, data[2])
+                    results.append('MLE')
+                elif p.returncode != 0:
+                    self.__write_status('%d.res' % i, 'RE', e.decode(), end_time - start_time, data[2])
+                    results.append('RE')
+                elif o.decode() != open(output_path).read():
+                    self.__write_status('%d.res' % i, 'WA', '', end_time - start_time, data[2])
+                    results.append('WA')
+                else:
+                    self.__write_status('%d.res' % i, 'AC', '', end_time - start_time, data[2])
+                    results.append('AC')
+        tle_count = mle_count = re_count = wa_count = ac_count = 0
+        for result in results:
+            if result == 'AC':
+                ac_count += 1
+            elif result == 'WA':
+                wa_count += 1
+            elif result == 'RE':
+                re_count += 1
+            elif result == 'MLE':
+                mle_count += 1
+            elif result == 'TLE':
+                tle_count += 1
+        self.__write_status('res', None, None, None, None, {
+            'status': 'CS',
+            'AC': ac_count,
+            'WA': wa_count,
+            'RE': re_count,
+            'MLE': mle_count,
+            'TLE': tle_count
+        })
+
+    def __memory_watcher(self, data):
+        max_memory = 0
         try:
-            output, error = program.communicate(bytes(input_string, 'ascii'),
-                                                self.__tim_lim)
-            data['return'] = program.returncode
-            data['time'] = time() - start_time
-        except TimeoutExpired:
-            data['time'] = self.__tim_lim
-            program.kill()
-        else:
-            data['output'] = output.decode()
-            data['error'] = error.decode()
+            p = Process(data[0])
+            memory = 1
+            while 0 < memory and max_memory <= self.__mem_lim:
+                memory = p.memory_info()[0] - p.memory_info_ex().shared
+                if max_memory < memory:
+                    max_memory = memory
+            data[1]()
+        except NoSuchProcess:
+            pass
+        finally:
+            data.append(max_memory)
 
-    def __set_status(self, status, error, time, memory):
-        self.__sts = status
-        self.__err = error
-        self.__tim = time
-        self.__mem = memory
+    def __write_status(self, name, status, error, time, memory, data=None):
+        if data == None:
+            data = {
+                'status': status,
+                'error': error,
+                'time': time,
+                'memory': memory
+            }
+        result_file = open(join(self.__res, name), 'w')
+        dump(data, result_file)
+        result_file.close()
 
-    def __write_status(self):
-        data = {
-            'status': self.__sts,
-            'error': self.__err,
-            'time': self.__tim,
-            'memory': self.__mem
-        }
-        res_fle = open(self.__res_pat, 'w')
-        dump(data, res_fle)
-        res_fle.close()
-
-    def status(self):
-        return (self.__sts, self.__err, self.__tim, self.__mem)
 
 if __name__ == '__main__':
-    Judge().run_module()
+    n = command_line_argument_handler()
+    in_list, out_list = input_output_list_builder(n.input_path, n.output_path)
+    Judge(n.language, n.time_limit, n.memory_limit, in_list, out_list, n.source_path, n.result_path, n.compiler_args)
