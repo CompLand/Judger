@@ -22,6 +22,7 @@ from json import dump
 from threading import Thread
 from psutil import Process, NoSuchProcess
 from argparse import ArgumentParser
+from platform import system
 
 sup_lan = supported_languages = ["c", "c++", "cpp", "java"]
 def_com_arg = default_compiler_arguments = {
@@ -30,6 +31,7 @@ def_com_arg = default_compiler_arguments = {
     'cpp': '',
     'java': ''
 }
+os_name = system()
 
 def writable(path):
     try:
@@ -198,7 +200,7 @@ class Judge:
 
     def __run(self):
         if self.__lan == 'java':
-            self.__exe = ['java', self.__exe]
+            self.__exe = ['java', '-classpath', self.__tmp_dir.name, split(self.__exe)[1]]
         l = [(self.__inp_lis[i], self.__out_lis[i]) for i in range(len(self.__inp_lis))]
         results = []
         i = 0
@@ -257,7 +259,12 @@ class Judge:
             p = Process(data[0])
             memory = 1
             while 0 < memory and max_memory <= self.__mem_lim:
-                memory = p.memory_info()[0] - p.memory_info_ex().shared
+                if os_name.lower() == 'linux':
+                    memory = p.memory_info()[0] - p.memory_info_ex().shared
+                elif os_name.lower() == 'darwin':
+                    memory = p.memory_info()[0]
+                elif os_name.lower() == 'windows':
+                    memory = p.memory_info_ex().private
                 if max_memory < memory:
                     max_memory = memory
             data[1]()
